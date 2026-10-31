@@ -1,0 +1,88 @@
+# Builds hakuX's debug APK (com.rfandango.haku_x.debug, installs next to the
+# release app) with the toolchain and dependency revisions android/README.md names.
+name: Android debug APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 29.0.14206865
+      DEPS: ${{ github.workspace }}/deps
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: FEX submodule
+        run: |
+          git submodule update --init --depth 1 external/fex
+          git -C external/fex submodule update --init --depth 1 External/fmt External/range-v3 \
+            External/rpmalloc External/unordered_dense External/xxhash Source/Common/cpp-optparse
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: SDK 36, build tools 36.1.0, NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.1.0" "ndk;${NDK_VERSION}" "cmake;3.31.6"
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build
+
+      - name: Third-party sources (NC_DEPS)
+        run: |
+          mkdir -p "$DEPS/root/subprojects"
+          cd "$DEPS"
+          git clone -q --depth 1 -b 1.4.304 https://github.com/zeux/volk.git volk
+          git clone -q --depth 1 -b 16.1.0 https://github.com/KhronosGroup/glslang.git glslang
+          git clone -q --depth 1 -b vulkan-sdk-1.4.328.0 https://github.com/KhronosGroup/SPIRV-Reflect.git spirv_reflect
+          git clone -q --depth 1 -b v3.3.0 https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git vma
+          git clone -q --depth 1 -b release-3.4.18 https://github.com/libsdl-org/SDL.git SDL3
+          git clone -q --depth 1 -b v4.7.0 https://gitlab.freedesktop.org/slirp/libslirp.git libslirp
+          git clone -q https://github.com/xemu-project/nv2a_vsh_cpu.git root/subprojects/nv2a_vsh_cpu
+          git -C root/subprojects/nv2a_vsh_cpu checkout -q 561fe80 2>/dev/null || \
+            echo "::warning::nv2a_vsh_cpu 561fe80 not found, building its default branch"
+          git clone -q --recursive https://github.com/bylaws/libadrenotools.git adrenotools
+          git -C adrenotools checkout -q 8fae8ce
+          git -C adrenotools submodule update --init --recursive
+          git -C adrenotools apply "$GITHUB_WORKSPACE/tools/native/adrenotools-kgsl-context-priority.patch"
+
+      - name: Native core
+        run: |
+          cmake -S native -B build/native/core -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DCMAKE_BUILD_TYPE=Release \
+            -DNC_DEPS="$DEPS"
+          ninja -C build/native/core hakuxcore
+
+      - name: Libraries into jniLibs
+        run: |
+          strip="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          b=build/native/core
+          out=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$out"
+          "$strip" -o "$out/libhakuxcore.so" "$b/libhakuxcore.so"
+          "$strip" -o "$out/libSDL3.so" "$b/sdl3/libSDL3.so"
+          for h in main_hook file_redirect_hook gsl_alloc_hook kgsl_context_hook hook_impl; do
+            if [ -f "$b/adrenotools/src/hook/lib$h.so" ]; then
+              "$strip" -o "$out/lib$h.so" "$b/adrenotools/src/hook/lib$h.so"
+            fi
+          done
+          ls -la "$out"
+
+      - name: APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hakuX-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
