@@ -68,7 +68,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DCMAKE_BUILD_TYPE=Release \
             -DNC_DEPS="$DEPS"
-          ninja -C build/native/core hakuxcore
+          ninja -k 0 -C build/native/core hakuxcore
 
       - name: Libraries into jniLibs
         run: |
@@ -102,5 +102,5 @@ jobs:
         if: failure()
         run: |
           # the last lines of the log as one annotation (readable without log access)
-          t=$(tail -n 60 "$RUNNER_TEMP/build.log" 2>/dev/null | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          t=$( (grep -n -E "error:|FAILED:|fatal|Error [0-9]|undefined reference|CMake Error|FAILURE" "$RUNNER_TEMP/build.log" | head -n 40; echo ---; tail -n 15 "$RUNNER_TEMP/build.log") 2>/dev/null | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=build failed::${t}"
