@@ -91,6 +91,8 @@ jobs:
         run: |
           exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           chmod +x gradlew
+          # gradle.properties names the maintainer's JDK; the runner's is JAVA_HOME
+          sed -i '/^org.gradle.java.home/d' gradle.properties
           ./gradlew --no-daemon assembleDebug
 
       - uses: actions/upload-artifact@v5
