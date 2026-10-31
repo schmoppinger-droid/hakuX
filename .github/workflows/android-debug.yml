@@ -9,34 +9,42 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
     env:
       NDK_VERSION: 29.0.14206865
       DEPS: ${{ github.workspace }}/deps
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: FEX submodule
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           git submodule update --init --depth 1 external/fex
           git -C external/fex submodule update --init --depth 1 External/fmt External/range-v3 \
             External/rpmalloc External/unordered_dense External/xxhash Source/Common/cpp-optparse
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
-
       - name: SDK 36, build tools 36.1.0, NDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.1.0" "ndk;${NDK_VERSION}" "cmake;3.31.6"
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
+          # the runner image's SDK (ANDROID_HOME) and its cmdline-tools
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" "platforms;android-36" "build-tools;36.1.0" "ndk;${NDK_VERSION}" "cmake;3.31.6" | tail -5
+          echo "ANDROID_NDK=$sdk/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build
 
       - name: Third-party sources (NC_DEPS)
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           mkdir -p "$DEPS/root/subprojects"
           cd "$DEPS"
           git clone -q --depth 1 -b 1.4.304 https://github.com/zeux/volk.git volk
@@ -55,6 +63,7 @@ jobs:
 
       - name: Native core
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           cmake -S native -B build/native/core -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DCMAKE_BUILD_TYPE=Release \
@@ -63,6 +72,7 @@ jobs:
 
       - name: Libraries into jniLibs
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           strip="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           b=build/native/core
           out=android/app/src/main/jniLibs/arm64-v8a
@@ -79,10 +89,18 @@ jobs:
       - name: APK
         working-directory: android
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: hakuX-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: Report failure
+        if: failure()
+        run: |
+          # the last lines of the log as one annotation (readable without log access)
+          t=$(tail -n 60 "$RUNNER_TEMP/build.log" 2>/dev/null | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=build failed::${t}"
