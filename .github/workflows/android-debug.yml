@@ -52,7 +52,7 @@ jobs:
           git clone -q --depth 1 -b vulkan-sdk-1.4.328.0 https://github.com/KhronosGroup/SPIRV-Reflect.git spirv_reflect
           git clone -q --depth 1 -b v3.3.0 https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git vma
           git clone -q --depth 1 -b release-3.4.18 https://github.com/libsdl-org/SDL.git SDL3
-          git clone -q --depth 1 -b v4.7.0 https://gitlab.freedesktop.org/slirp/libslirp.git libslirp
+          git clone -q --depth 1 -b v4.8.0 https://gitlab.freedesktop.org/slirp/libslirp.git libslirp  # nat.c uses slirp_ssize_t (4.8.0)
           git clone -q https://github.com/xemu-project/nv2a_vsh_cpu.git root/subprojects/nv2a_vsh_cpu
           git -C root/subprojects/nv2a_vsh_cpu checkout -q 561fe80 2>/dev/null || \
             echo "::warning::nv2a_vsh_cpu 561fe80 not found, building its default branch"
